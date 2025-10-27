@@ -1,0 +1,37 @@
+name: Python CI Pipeline
+
+# Where to trigger the workflow
+on:
+  push:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    # What type of machine to run the job on
+    runs-on: ubuntu-latest
+
+    steps:
+      # Duplicate the codebase onto a VM
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Install Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Run linting
+      - name: Lint with flake8
+        run: |
+          # Run flake8 to check for syntax errors and undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Run flake8 to check for style issues (don't fail the build on style issues)
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
