@@ -23,6 +23,9 @@ DB_PASS = os.environ.get('DB_PASS')
 DB_HOST = os.environ.get('DB_HOST')
 DB_PORT = os.environ.get('DB_PORT', 5432)
 
+# --- Admin User ---
+ADMIN_PHONE_NUMBER = os.environ.get('ADMIN_PHONE_NUMBER')
+
 # --- Global Clients (Lazy Loading) ---
 db_pool = None
 db_pool_lock = threading.Lock()
@@ -148,6 +151,7 @@ def get_favorites_for_user(phone_number):
         if conn:
             pool.putconn(conn)
 
+# --- UPDATED: Help message ---
 def get_help_message():
     """
     Return the help message listing available commands.
@@ -163,6 +167,12 @@ def get_help_message():
 
 ➕ *הוסף [שם חוף]* (למשל 'הוסף בת גלים')
    - יוסיף את החוף למועדפים שלך.
+   
+🔔 *הצטרף להתראות*
+   - ירשום אותך לקבלת עדכון שבועי (בשבת בערב).
+
+🔕 *הסר*
+   - יסיר אותך מרשימת התפוצה לעדכונים.
 
 📋 *רשימת חופים*
    - יציג לך את כל החופים שאני מכיר.
@@ -170,6 +180,46 @@ def get_help_message():
 ❓ *עזרה*
    - יציג את ההודעה הזו שוב.
 """
+
+# --- NEW: Function to update user subscription ---
+def update_subscription_settings(phone_number, status, frequency=None):
+    """
+    Updates a user's subscription settings in the 'users' table.
+    """
+    pool = get_db_pool()
+    if not pool: 
+        print("Failed to get DB pool, cannot update subscription.", file=sys.stderr)
+        return False
+    conn = None
+    
+    try:
+        conn = pool.getconn()
+        with conn.cursor() as cursor:
+            if frequency:
+                # If frequency is provided, update both status and frequency
+                sql = """
+                UPDATE users 
+                SET subscription_status = %s, subscription_frequency = %s
+                WHERE phone_number = %s;
+                """
+                cursor.execute(sql, (status, frequency, phone_number))
+            else:
+                # If no frequency, just update the status
+                sql = """
+                UPDATE users 
+                SET subscription_status = %s 
+                WHERE phone_number = %s;
+                """
+                cursor.execute(sql, (status, phone_number))
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"Database update_subscription failed: {e}", file=sys.stderr)
+        if conn: conn.rollback()
+        return False
+    finally:
+        if conn:
+            pool.putconn(conn)
 
 @app.route('/', methods=['POST'])
 def process_pubsub_message():
@@ -192,6 +242,7 @@ def process_pubsub_message():
         print(f"Worker received job: Phone={phone_number}, Msg={message_text}")
         
         reply_text = ""
+        is_admin = (phone_number == ADMIN_PHONE_NUMBER) # Check for admin privileges
 
         # --- 2. Process different commands ---
 
@@ -209,7 +260,8 @@ def process_pubsub_message():
                         today = forecast[0]
                         reply_text += f"\n--- {beach_name} ({today['day_name']}) ---\n"
                         for hour_data in today['hourly_forecast']:
-                            if hour_data['time'] in ["09", "12"]:
+                            # This uses your corrected logic for "09" vs "09:00"
+                            if hour_data['time'] in ["09", "12"]: 
                                 reply_text += f"  {hour_data['time']}: גלים {hour_data['wave_height']}, ים {hour_data['sea_description']}\n"
                     else:
                         reply_text += f"\n- לא הצלחתי להביא תחזית ל{beach_name}.\n"
@@ -243,6 +295,47 @@ def process_pubsub_message():
         elif message_text in ["עזרה", "help"]:
              print("Handling 'help' command...")
              reply_text = get_help_message()
+
+        # 'Subscribe' command
+        elif message_text in ["הצטרף להתראות", "subscribe"]:
+            print("Handling 'subscribe' command...")
+            # Default for regular users is 'weekly'
+            if update_subscription_settings(phone_number, 'subscribed', 'weekly'):
+                reply_text = "נרשמת בהצלחה! 🔔\nתקבל עדכון שבועי מדי שבת בערב עם תחזית ל-7 הימים הבאים."
+            else:
+                reply_text = "אירעה שגיאה ברישום. נסה שוב מאוחר יותר."
+
+        # 'Unsubscribe' command
+        elif message_text in ["הסר", "unsubscribe"]:
+            print("Handling 'unsubscribe' command...")
+            if update_subscription_settings(phone_number, 'unsubscribed'):
+                reply_text = "הסרתי אותך מקבלת עדכונים אוטומטיים. 🔕"
+            else:
+                reply_text = "אירעה שגיאה בהסרה. נסה שוב מאוחר יותר."
+        
+        # 'Admin: set daily'
+        elif message_text == "הגדר יומי" and is_admin:
+            print("Handling 'admin: set daily' command...")
+            if update_subscription_settings(phone_number, 'subscribed', 'daily'):
+                reply_text = "מנהל: הוגדר תזמון *יומי*."
+            else:
+                reply_text = "שגיאת מנהל."
+
+        # 'Admin: set 3-day'
+        elif message_text == "הגדר 3 ימים" and is_admin:
+            print("Handling 'admin: set 3-day' command...")
+            if update_subscription_settings(phone_number, 'subscribed', '3-day'):
+                reply_text = "מנהל: הוגדר תזמון *כל 3 ימים*."
+            else:
+                reply_text = "שגיאת מנהל."
+        
+        # 'Admin: set weekly'
+        elif message_text == "הגדר שבועי" and is_admin:
+            print("Handling 'admin: set weekly' command...")
+            if update_subscription_settings(phone_number, 'subscribed', 'weekly'):
+                reply_text = "מנהל: הוגדר תזמון *שבועי*."
+            else:
+                reply_text = "שגיאת מנהל."
 
         # Default: Assume it's a beach name lookup
         else:
