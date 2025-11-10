@@ -76,7 +76,7 @@ def get_forecast(beach_slug):
         soup = BeautifulSoup(response.text, 'html.parser')
         
         # 1. Find all day containers (div.day.fw), but only take the first 4
-        day_containers = soup.find_all('div', class_='day fw')[:4]
+        day_containers = soup.find_all('div', class_='day fw')
         
         if not day_containers:
             print("Error: Could not find any 'day fw' containers.", file=sys.stderr)
