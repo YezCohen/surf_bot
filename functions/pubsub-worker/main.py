@@ -8,13 +8,12 @@ import psycopg2
 import psycopg2.pool
 from flask import Flask, request, Response
 
-# ייבוא מקומי של הסקרייפר
+# Import scraper
 import data_fetcher 
 
 app = Flask(__name__)
 
 # --- Configuration (Loaded from Environment) ---
-# (ללא שינוי)
 WHATSAPP_API_TOKEN = os.environ.get('WHATSAPP_API_TOKEN')
 PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
 
@@ -25,12 +24,10 @@ DB_HOST = os.environ.get('DB_HOST')
 DB_PORT = os.environ.get('DB_PORT', 5432)
 
 # --- Global Clients (Lazy Loading) ---
-# (ללא שינוי)
 db_pool = None
 db_pool_lock = threading.Lock()
 
 # --- DB Getter (Lazy) ---
-# (פונקציית get_db_pool ללא שינוי)
 def get_db_pool():
     global db_pool
     if db_pool:
@@ -57,8 +54,6 @@ def get_db_pool():
             print(f"Error initializing database pool: {e}", file=sys.stderr)
             db_pool = None
             return None
-
-# --- פונקציות עזר קיימות (ללא שינוי) ---
 
 def get_all_beaches_from_db():
     pool = get_db_pool()
@@ -89,7 +84,7 @@ def find_beach_slug(beach_name_query):
             cursor.execute(sql_exact, (beach_name_query, beach_name_query))
             result = cursor.fetchone()
             if result:
-                return result # מחזירים (slug, name)
+                return result # Return (slug, name)
 
             sql_partial = "SELECT slug, name FROM beaches WHERE name ILIKE %s OR slug ILIKE %s;"
             query_param = f"%{beach_name_query}%" 
@@ -97,7 +92,7 @@ def find_beach_slug(beach_name_query):
             result = cursor.fetchone()
             
             if result:
-                return result # מחזירים (slug, name)
+                return result # Return (slug, name)
             else:
                 return None
     except Exception as e:
@@ -106,8 +101,6 @@ def find_beach_slug(beach_name_query):
     finally:
         if conn:
             pool.putconn(conn)
-
-# --- פונקציות חדשות לניהול מועדפים (ללא שינוי) ---
 
 def add_favorite(phone_number, beach_slug):
     pool = get_db_pool()
@@ -155,10 +148,9 @@ def get_favorites_for_user(phone_number):
         if conn:
             pool.putconn(conn)
 
-# --- ✨ פונקציה חדשה: הודעת עזרה ---
 def get_help_message():
     """
-    מחזיר את הודעת העזרה הסטנדרטית
+    Return the help message listing available commands.
     """
     return """
 אלו הפקודות שאני מכיר:
@@ -179,8 +171,6 @@ def get_help_message():
    - יציג את ההודעה הזו שוב.
 """
 
-# --- פונקציה ראשית מעודכנת (נתב פקודות) ---
-
 @app.route('/', methods=['POST'])
 def process_pubsub_message():
     """
@@ -192,7 +182,7 @@ def process_pubsub_message():
         return Response("Bad Request", status=400)
 
     try:
-        # 1. ניתוח הודעת ה-Pub/Sub
+        # 1. Parse Pub/Sub Message
         message_data = base64.b64decode(envelope['message']['data']).decode('utf-8')
         job_data = json.loads(message_data)
         
@@ -203,9 +193,9 @@ def process_pubsub_message():
         
         reply_text = ""
 
-        # --- 2. ✨ נתב פקודות משודרג ---
+        # --- 2. Process different commands ---
 
-        # פקודה: "מועדפים"
+        # 'Favorites' command
         if message_text in ["מועדפים", "המועדפים שלי", "favorites", "my favorites"]:
             print("Handling 'get favorites' command...")
             favorites = get_favorites_for_user(phone_number)
@@ -218,14 +208,13 @@ def process_pubsub_message():
                     if forecast:
                         today = forecast[0]
                         reply_text += f"\n--- {beach_name} ({today['day_name']}) ---\n"
-                        # ✨ תיקון הבאג שלך - הוספנו :00
                         for hour_data in today['hourly_forecast']:
                             if hour_data['time'] in ["09", "12"]:
                                 reply_text += f"  {hour_data['time']}: גלים {hour_data['wave_height']}, ים {hour_data['sea_description']}\n"
                     else:
                         reply_text += f"\n- לא הצלחתי להביא תחזית ל{beach_name}.\n"
 
-        # פקודה: "הוסף X"
+        # 'Add' favorite command
         elif message_text.startswith("הוסף ") or message_text.startswith("add "):
             beach_name_to_add = message_text.replace("הוסף ", "").replace("add ", "").strip()
             print(f"Handling 'add favorite' command for: {beach_name_to_add}")
@@ -240,7 +229,7 @@ def process_pubsub_message():
             else:
                 reply_text = f"מצטער, לא מצאתי חוף בשם '{beach_name_to_add}'."
 
-        # ✨ פקודה חדשה: "רשימת חופים"
+        # 'Beach list' command
         elif message_text in ["רשימת חופים", "list beaches"]:
             print("Handling 'list beaches' command...")
             beach_list = get_all_beaches_from_db()
@@ -250,24 +239,22 @@ def process_pubsub_message():
             else:
                 reply_text = "מצטער, אירעה שגיאה בניסיון לשלוף את רשימת החופים."
 
-        # ✨ פקודה חדשה: "עזרה"
+        # 'Help' command
         elif message_text in ["עזרה", "help"]:
              print("Handling 'help' command...")
              reply_text = get_help_message()
 
-        # פקודה: ברירת מחדל (נסיון חיפוש חוף)
+        # Default: Assume it's a beach name lookup
         else:
             print(f"Handling 'find beach' (default) command for: {message_text}")
             beach_result = find_beach_slug(message_text)
             
             if not beach_result:
-                # ✨ שינוי: אם לא מצאנו, שלח הודעת עזרה
                 print(f"Could not find beach. Sending help message.")
                 reply_text = f"מצטער, לא זיהיתי את הפקודה '{message_text}'.\n"
                 reply_text += get_help_message()
             
             else:
-                # --- ✨ שינוי מרכזי: תחזית ל-3 ימים ---
                 beach_slug, beach_name = beach_result
                 print(f"Found beach: '{beach_slug}'. Fetching forecast...")
                 forecast_list = data_fetcher.get_forecast(beach_slug)
@@ -275,24 +262,22 @@ def process_pubsub_message():
                 if not forecast_list:
                     reply_text = "מצטער, לא הצלחתי להביא את התחזית עבור החוף הזה כרגע."
                 else:
-                    # בונה את התשובה עבור 3 ימים
                     reply_text = f"התחזית לחוף '{beach_name}' ל-3 הימים הקרובים:\n"
                     
-                    # לולאה שעוברת על 3 הימים הראשונים שקיבלנו
+                    # Forcast for next 3 days
                     for day_forecast in forecast_list[:3]:
                         reply_text += f"\n--- {day_forecast['day_name']} ---"
                         
                         if not day_forecast['hourly_forecast']:
                             reply_text += " (אין נתונים זמינים)\n"
-                            continue # עבור ליום הבא
+                            continue # Go to next day
                         
-                        # הוסף את כל השעות שגרדנו (06, 09, 12)
                         for hour_data in day_forecast['hourly_forecast']:
                             reply_text += f"\n  {hour_data['time']}: גלים {hour_data['wave_height']}, ים {hour_data['sea_description']}"
                         
-                        reply_text += "\n" # רווח בין הימים
+                        reply_text += "\n" # Space after each day
 
-        # --- 3. שלח את התשובה הסופית ---
+        # --- 3. Send final message ---
         print(f"Sending reply to {phone_number}...")
         send_whatsapp_message(phone_number, reply_text)
 

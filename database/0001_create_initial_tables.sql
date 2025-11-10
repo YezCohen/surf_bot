@@ -16,7 +16,7 @@ CREATE TABLE beaches (
     last_updated TIMESTAMP WITH TIME ZONE
 );
 
--- 3. טבלת מועדפים (טבלת קישור)
+-- 3. Favorites Table
 CREATE TABLE favorites (
     phone_number VARCHAR(20) REFERENCES users(phone_number),
     beach_slug VARCHAR(100) REFERENCES beaches(slug),
